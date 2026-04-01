@@ -145,8 +145,6 @@ void WriteDefaultConfig(const std::wstring& path) {
     WritePrivateProfileStringW(L"Network", L"NIC", L"auto", p);
 
     WritePrivateProfileStringW(L"Hotkey", L"Hotkey", L"Ctrl+W", p);
-
-    WritePrivateProfileStringW(L"General", L"AutoStart", L"0", p);
 }
 
 void LoadConfig(Config& cfg) {
@@ -183,8 +181,6 @@ void LoadConfig(Config& cfg) {
 
     std::wstring hotkeyStr = ReadIniString(L"Hotkey", L"Hotkey", L"Ctrl+W", p);
     ParseHotkeyString(hotkeyStr, cfg.hotkeyModifiers, cfg.hotkeyVk);
-
-    cfg.autoStart       = ReadIniInt(L"General", L"AutoStart", 0, p) != 0;
 
     // Clamp values
     if (cfg.opacity < 0) cfg.opacity = 0;

@@ -30,9 +30,6 @@ struct Config {
     // [Hotkey]
     UINT hotkeyModifiers = MOD_CONTROL;
     UINT hotkeyVk        = 'W';
-
-    // [General]
-    bool autoStart = false;
 };
 
 // Get config file path (%APPDATA%\SimpleScreenMark\config.ini)

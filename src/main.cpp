@@ -170,11 +170,6 @@ static void OnConfigChanged() {
         TryRegisterHotkey();
     }
 
-    // Update auto-start if changed
-    if (oldConfig.autoStart != g_config.autoStart) {
-        SetAutoStart(g_config.autoStart);
-    }
-
     // Reset refresh timer
     SetupRefreshTimer();
 
@@ -212,11 +207,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
             StartConfigWatch(hwnd);
             return 0;
         }
-        case IDM_AUTOSTART: {
-            bool current = IsAutoStartEnabled();
-            SetAutoStart(!current);
+        case IDM_AUTOSTART:
+            SetAutoStart(!IsAutoStartEnabled());
             return 0;
-        }
         case IDM_EXIT:
             PostQuitMessage(0);
             return 0;
@@ -325,11 +318,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     // Setup refresh timer
     SetupRefreshTimer();
-
-    // Sync auto-start state
-    if (g_config.autoStart) {
-        SetAutoStart(true);
-    }
 
     // Message loop
     MSG msg;
