@@ -1,0 +1,28 @@
+# Build output
+/build/
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+*.sdf
+*.opensdf
+
+# Compiled objects
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.exp
+
+# Editors
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Windows
+Thumbs.db
+Desktop.ini
