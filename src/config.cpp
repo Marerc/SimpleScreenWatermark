@@ -106,45 +106,52 @@ void ParseHotkeyString(const std::wstring& str, UINT& modifiers, UINT& vk) {
 }
 
 void WriteDefaultConfig(const std::wstring& path) {
-    // Ensure directory exists
     std::wstring dir = GetConfigDir();
     CreateDirectoryW(dir.c_str(), nullptr);
 
-    // Pre-create the file with a UTF-16 LE BOM so that WritePrivateProfileStringW
-    // operates in Unicode mode on all systems (including English code-page 1252).
-    // Without the BOM the API writes ANSI, which corrupts non-ASCII chars like "宋体".
+    // Write the entire file as UTF-16 LE in one shot.
+    // Avoids the WritePrivateProfileStringW quirk of inserting a blank line
+    // before the first section when the file already contains only a BOM.
+    // \u5B8B\u4F53 = 宋体
+    static const wchar_t kContent[] =
+        L"[Watermark]\r\n"
+        L"Template={hostname} {ip} {time}\r\n"
+        L"FontName=\u5B8B\u4F53\r\n"
+        L"FontSize=20\r\n"
+        L"FontColor=808080\r\n"
+        L"Opacity=50\r\n"
+        L"SpacingX=700\r\n"
+        L"SpacingY=400\r\n"
+        L"Angle=-42\r\n"
+        L"Aliased=1\r\n"
+        L"\r\n"
+        L"[Time]\r\n"
+        L"Format=%Y-%m-%d\r\n"
+        L"RefreshInterval=1\r\n"
+        L"RandomRefreshRange=0\r\n"
+        L"\r\n"
+        L"[Dynamic]\r\n"
+        L"RandomOffsetXRange=0\r\n"
+        L"RandomOffsetYRange=0\r\n"
+        L"\r\n"
+        L"[Network]\r\n"
+        L"NIC=auto\r\n"
+        L"\r\n"
+        L"[Hotkey]\r\n"
+        L"Hotkey=Ctrl+W\r\n";
+
     HANDLE hFile = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile != INVALID_HANDLE_VALUE) {
-        WORD bom = 0xFEFF;
-        DWORD written = 0;
-        WriteFile(hFile, &bom, sizeof(bom), &written, nullptr);
-        CloseHandle(hFile);
-    }
+    if (hFile == INVALID_HANDLE_VALUE) return;
 
-    const wchar_t* p = path.c_str();
-
-    WritePrivateProfileStringW(L"Watermark", L"Template", L"{hostname} {ip} {time}", p);
-    // L"\u5B8B\u4F53" = 宋体  (Unicode escape keeps source file ASCII-clean)
-    WritePrivateProfileStringW(L"Watermark", L"FontName", L"\u5B8B\u4F53", p);
-    WritePrivateProfileStringW(L"Watermark", L"FontSize", L"20", p);
-    WritePrivateProfileStringW(L"Watermark", L"FontColor", L"808080", p);
-    WritePrivateProfileStringW(L"Watermark", L"Opacity", L"50", p);
-    WritePrivateProfileStringW(L"Watermark", L"SpacingX", L"700", p);
-    WritePrivateProfileStringW(L"Watermark", L"SpacingY", L"400", p);
-    WritePrivateProfileStringW(L"Watermark", L"Angle", L"-42", p);
-    WritePrivateProfileStringW(L"Watermark", L"Aliased", L"1", p);
-
-    WritePrivateProfileStringW(L"Time", L"Format", L"%Y-%m-%d", p);
-    WritePrivateProfileStringW(L"Time", L"RefreshInterval", L"1", p);
-    WritePrivateProfileStringW(L"Time", L"RandomRefreshRange", L"0", p);
-
-    WritePrivateProfileStringW(L"Dynamic", L"RandomOffsetXRange", L"0", p);
-    WritePrivateProfileStringW(L"Dynamic", L"RandomOffsetYRange", L"0", p);
-
-    WritePrivateProfileStringW(L"Network", L"NIC", L"auto", p);
-
-    WritePrivateProfileStringW(L"Hotkey", L"Hotkey", L"Ctrl+W", p);
+    DWORD written = 0;
+    // UTF-16 LE BOM
+    WORD bom = 0xFEFF;
+    WriteFile(hFile, &bom, sizeof(bom), &written, nullptr);
+    // Content (wchar_t array, no null terminator)
+    WriteFile(hFile, kContent,
+              (DWORD)(wcslen(kContent) * sizeof(wchar_t)), &written, nullptr);
+    CloseHandle(hFile);
 }
 
 void LoadConfig(Config& cfg) {
