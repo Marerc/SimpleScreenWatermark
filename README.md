@@ -81,11 +81,6 @@ cmake --build build --config Release
 
 支持的修饰键：`Ctrl`、`Alt`、`Shift`、`Win`。支持的按键：`A-Z`、`F1-F24`、`Space`、`Tab`、`Escape`。
 
-### [General] 通用设置
-
-| 键 | 默认值 | 说明 |
-|---|---|---|
-| AutoStart | `0` | 开机自启动（1=开启，0=关闭） |
 
 ### 模板变量
 
