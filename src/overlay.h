@@ -19,11 +19,17 @@ void CreateOverlays(HINSTANCE hInstance, const Config& cfg,
 void UpdateOverlays(const Config& cfg, const wchar_t* resolvedText,
                     std::vector<OverlayWindow>& overlays);
 
-// Show or hide all overlays
-void ShowOverlays(std::vector<OverlayWindow>& overlays, bool show);
+// Show or hide all overlays.
+// When showing, cfg+resolvedText are used to refresh content first.
+void ShowOverlays(std::vector<OverlayWindow>& overlays, bool show,
+                  const Config* cfg = nullptr, const wchar_t* resolvedText = nullptr);
 
 // Destroy all overlay windows
 void DestroyOverlays(std::vector<OverlayWindow>& overlays);
 
 // Register the overlay window class
 void RegisterOverlayClass(HINSTANCE hInstance);
+
+// Re-assert overlay windows as topmost, then push taskbar back above them.
+// Call this whenever another window steals the top z-order position.
+void ReassertOverlayZOrder(std::vector<OverlayWindow>& overlays);

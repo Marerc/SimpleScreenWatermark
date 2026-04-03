@@ -21,6 +21,22 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg,
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// After setting our overlays topmost, push the shell taskbar windows back above
+// them so the taskbar is never obscured by our overlay.
+// Shell_TrayWnd       = primary taskbar
+// Shell_SecondaryTrayWnd = per-monitor taskbar (multi-monitor, Windows 11)
+static void ReassertTaskbarZOrder() {
+    HWND h = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (h) SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+    h = nullptr;
+    while ((h = FindWindowExW(nullptr, h, L"Shell_SecondaryTrayWnd", nullptr)) != nullptr) {
+        SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
 void RegisterOverlayClass(HINSTANCE hInstance) {
     WNDCLASSEXW wc = {};
     wc.cbSize        = sizeof(wc);
@@ -101,7 +117,6 @@ void CreateOverlays(HINSTANCE hInstance, const Config& cfg,
             DeleteObject(hBitmap);
         }
 
-        // Use SetWindowPos to ensure TOPMOST z-order
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
@@ -110,6 +125,9 @@ void CreateOverlays(HINSTANCE hInstance, const Config& cfg,
         ow.workArea = workArea;
         overlays.push_back(ow);
     }
+
+    // Push taskbar back above our overlays
+    ReassertTaskbarZOrder();
 }
 
 void UpdateOverlays(const Config& cfg, const wchar_t* resolvedText,
@@ -127,21 +145,30 @@ void UpdateOverlays(const Config& cfg, const wchar_t* resolvedText,
             ApplyLayeredBitmap(ow.hwnd, hBitmap, ow.workArea);
             DeleteObject(hBitmap);
         }
-
-        // Re-assert TOPMOST z-order on every update
-        SetWindowPos(ow.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // No SetWindowPos here — z-order is established at create/show time.
+        // Re-asserting TOPMOST on every content update would repeatedly push
+        // the overlay above the taskbar, causing taskbar z-order interference.
     }
 }
 
-void ShowOverlays(std::vector<OverlayWindow>& overlays, bool show) {
-    for (auto& ow : overlays) {
-        if (ow.hwnd && IsWindow(ow.hwnd)) {
-            if (show) {
-                // Re-assert TOPMOST z-order when showing
+void ShowOverlays(std::vector<OverlayWindow>& overlays, bool show,
+                  const Config* cfg, const wchar_t* resolvedText) {
+    if (show) {
+        // Refresh content first (time/ip may have changed while hidden)
+        if (cfg && resolvedText) {
+            UpdateOverlays(*cfg, resolvedText, overlays);
+        }
+        for (auto& ow : overlays) {
+            if (ow.hwnd && IsWindow(ow.hwnd)) {
                 SetWindowPos(ow.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            } else {
+            }
+        }
+        // Push taskbar back above our overlays
+        ReassertTaskbarZOrder();
+    } else {
+        for (auto& ow : overlays) {
+            if (ow.hwnd && IsWindow(ow.hwnd)) {
                 ShowWindow(ow.hwnd, SW_HIDE);
             }
         }
@@ -155,4 +182,14 @@ void DestroyOverlays(std::vector<OverlayWindow>& overlays) {
         }
     }
     overlays.clear();
+}
+
+void ReassertOverlayZOrder(std::vector<OverlayWindow>& overlays) {
+    for (auto& ow : overlays) {
+        if (ow.hwnd && IsWindow(ow.hwnd) && IsWindowVisible(ow.hwnd)) {
+            SetWindowPos(ow.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+    ReassertTaskbarZOrder();
 }

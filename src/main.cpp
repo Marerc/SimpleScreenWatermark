@@ -30,6 +30,9 @@ static ULONG_PTR    g_gdiplusToken = 0;
 
 static std::vector<OverlayWindow> g_overlays;
 
+// WinEvent hook — detects other windows going topmost so we can re-assert ours
+static HWINEVENTHOOK g_zorderHook = nullptr;
+
 // Shared RNG — mt19937 supports full int range unlike rand() (RAND_MAX=32767)
 static std::mt19937 g_rng{std::random_device{}()};
 
@@ -40,6 +43,8 @@ static void RefreshOverlays();
 static void RecreateOverlays();
 static void ToggleWatermark();
 static void TryRegisterHotkey();
+static void InstallZOrderHook();
+static void RemoveZOrderHook();
 
 // Convert modifiers+vk to human-readable string, e.g. "Ctrl+W"
 static std::wstring HotkeyToString(UINT modifiers, UINT vk) {
@@ -77,6 +82,47 @@ static void TryRegisterHotkey() {
     if (!RegisterToggleHotkey(g_hwndMain, g_config.hotkeyModifiers, g_config.hotkeyVk)) {
         // Delay the balloon by 600ms so tray icon has time to appear
         SetTimer(g_hwndMain, TIMER_HOTKEY_NOTIFY, 600, nullptr);
+    }
+}
+
+// WinEvent callback — fires when any window's Z-order changes.
+// We use EVENT_OBJECT_REORDER which covers SetWindowPos z-order changes,
+// including when another app calls SetWindowPos(HWND_TOPMOST).
+// Re-assert our overlay above all normal topmost windows (but keep taskbar on top).
+static void CALLBACK ZOrderEventProc(HWINEVENTHOOK, DWORD event,
+                                      HWND hwndChanged, LONG idObject,
+                                      LONG, DWORD, DWORD) {
+    // Only care about window-level reorders (not child controls, menus, etc.)
+    if (idObject != OBJID_WINDOW) return;
+
+    // Ignore our own overlay windows to avoid an infinite re-assertion loop
+    for (const auto& ow : g_overlays) {
+        if (ow.hwnd == hwndChanged) return;
+    }
+
+    // Only re-assert when watermark is visible
+    if (!g_watermarkVisible) return;
+
+    // Post a message so the re-assertion runs on the main thread
+    // (WinEvent callbacks must not call SendMessage to windows in other threads)
+    PostMessage(g_hwndMain, WM_APP + 3, 0, 0);
+}
+
+static void InstallZOrderHook() {
+    if (g_zorderHook) return;
+    // WINEVENT_OUTOFCONTEXT: callback runs in our process via message pump,
+    // no cross-process injection needed.
+    g_zorderHook = SetWinEventHook(
+        EVENT_OBJECT_REORDER, EVENT_OBJECT_REORDER,
+        nullptr, ZOrderEventProc,
+        0, 0,  // all processes and threads
+        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+}
+
+static void RemoveZOrderHook() {
+    if (g_zorderHook) {
+        UnhookWinEvent(g_zorderHook);
+        g_zorderHook = nullptr;
     }
 }
 
@@ -134,7 +180,13 @@ static void RecreateOverlays() {
 
 static void ToggleWatermark() {
     g_watermarkVisible = !g_watermarkVisible;
-    ShowOverlays(g_overlays, g_watermarkVisible);
+    if (g_watermarkVisible) {
+        // Re-resolve so content is fresh (e.g. {time} updated while hidden)
+        g_lastResolvedText = ResolveTemplate(g_config);
+        ShowOverlays(g_overlays, true, &g_config, g_lastResolvedText.c_str());
+    } else {
+        ShowOverlays(g_overlays, false);
+    }
 }
 
 static UINT ComputeRefreshMs() {
@@ -234,6 +286,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
             }
             return 0;
         }
+        if (wParam == TIMER_ZORDER) {
+            // Periodic z-order re-assertion — covers apps (e.g. WeChat) that
+            // don't trigger EVENT_OBJECT_REORDER or that continuously fight
+            // for z-order.  This does NOT re-render content or change positions.
+            if (g_watermarkVisible) {
+                ReassertOverlayZOrder(g_overlays);
+            }
+            return 0;
+        }
         if (wParam == TIMER_HOTKEY_NOTIFY) {
             // One-shot: show balloon then cancel
             KillTimer(hwnd, TIMER_HOTKEY_NOTIFY);
@@ -246,6 +307,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
         OnConfigChanged();
         return 0;
 
+    case WM_ZORDER_RECHECK:
+        // Another window changed z-order (e.g. WeChat went topmost).
+        // Re-assert our overlays above it, then push taskbar back on top.
+        if (g_watermarkVisible) {
+            ReassertOverlayZOrder(g_overlays);
+        }
+        return 0;
+
     case WM_DISPLAYCHANGE:
         // Monitor configuration changed
         RecreateOverlays();
@@ -254,8 +323,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
     case WM_DESTROY:
         RemoveTrayIcon(hwnd);
         UnregisterToggleHotkey(hwnd);   // OS also auto-releases on exit
+        RemoveZOrderHook();
         StopConfigWatch();
         KillTimer(hwnd, TIMER_REFRESH);
+        KillTimer(hwnd, TIMER_ZORDER);
         KillTimer(hwnd, TIMER_HOTKEY_NOTIFY);
         PostQuitMessage(0);
         return 0;
@@ -318,6 +389,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     // Setup refresh timer
     SetupRefreshTimer();
+
+    // Watch for other windows going topmost (e.g. WeChat "always on top")
+    // so we can re-assert our overlay z-order reactively.
+    InstallZOrderHook();
+
+    // Periodic z-order re-assertion as a fallback for apps that don't trigger
+    // EVENT_OBJECT_REORDER (e.g. WeChat).  500ms is lightweight — SetWindowPos
+    // with SWP_NOMOVE|SWP_NOSIZE is essentially a no-op when already correct.
+    // This timer is independent of TIMER_REFRESH (content/position refresh).
+    SetTimer(g_hwndMain, TIMER_ZORDER, 500, nullptr);
 
     // Message loop
     MSG msg;
