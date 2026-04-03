@@ -1,5 +1,6 @@
 # Build output
 /build/
+deployNewBuild.ps1
 
 # Visual Studio
 .vs/
