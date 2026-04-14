@@ -85,6 +85,57 @@ static void TryRegisterHotkey() {
     }
 }
 
+// Returns true if any popup menu is currently visible above the taskbar.
+// Covers both standard Win32 menus (class #32768) and custom popup windows
+// (e.g. WeChat / QQ player context menus built with custom UI frameworks).
+//
+// Detection strategy: walk the TOPMOST z-order band from the top. Any visible
+// WS_POPUP window that is (a) not our overlay, (b) not the taskbar, and
+// (c) small enough to be a menu rather than a full app window is treated as a
+// transient popup. While such a popup is visible we skip ReassertTaskbarZOrder()
+// so the taskbar does not cover it.
+static bool IsAnyMenuVisible() {
+    // 1. Standard Win32 menus (always class #32768)
+    {
+        HWND h = nullptr;
+        while ((h = FindWindowExW(nullptr, h, L"#32768", nullptr)) != nullptr)
+            if (IsWindowVisible(h)) return true;
+    }
+
+    // 2. Custom popup menus: scan the TOPMOST band top-down
+    for (HWND w = GetTopWindow(nullptr); w; w = GetNextWindow(w, GW_HWNDNEXT)) {
+        if (!IsWindowVisible(w)) continue;
+
+        LONG exStyle = GetWindowLongW(w, GWL_EXSTYLE);
+        if (!(exStyle & WS_EX_TOPMOST)) break;   // left TOPMOST band — stop
+
+        // Skip our own overlay windows
+        bool isOurs = false;
+        for (const auto& ow : g_overlays)
+            if (ow.hwnd == w) { isOurs = true; break; }
+        if (isOurs) continue;
+
+        // Skip taskbar
+        wchar_t cls[64] = {};
+        GetClassNameW(w, cls, 64);
+        if (wcscmp(cls, L"Shell_TrayWnd") == 0 ||
+            wcscmp(cls, L"Shell_SecondaryTrayWnd") == 0) continue;
+
+        // Small WS_POPUP → likely a custom context menu, not a full app window.
+        // Threshold 800×800 covers typical menus (< 500 wide) while excluding
+        // persistent app windows (WeChat, etc. are wider / taller).
+        LONG style = GetWindowLongW(w, GWL_STYLE);
+        if (style & WS_POPUP) {
+            RECT r;
+            GetWindowRect(w, &r);
+            if ((r.right - r.left) < 800 && (r.bottom - r.top) < 800)
+                return true;
+        }
+    }
+
+    return false;
+}
+
 // WinEvent callback — fires when any window's Z-order changes.
 // We use EVENT_OBJECT_REORDER which covers SetWindowPos z-order changes,
 // including when another app calls SetWindowPos(HWND_TOPMOST).
@@ -291,7 +342,19 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
             // don't trigger EVENT_OBJECT_REORDER or that continuously fight
             // for z-order.  This does NOT re-render content or change positions.
             if (g_watermarkVisible) {
-                ReassertOverlayZOrder(g_overlays);
+                if (IsAnyMenuVisible()) {
+                    // A popup menu is open above the taskbar.
+                    // Push our overlay to the top (it's click-through so the menu
+                    // stays visible and interactive beneath it), but do NOT call
+                    // ReassertTaskbarZOrder() — that would push the taskbar above
+                    // the menu and cover it.
+                    for (auto& ow : g_overlays)
+                        if (ow.hwnd && IsWindow(ow.hwnd) && IsWindowVisible(ow.hwnd))
+                            SetWindowPos(ow.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                } else {
+                    ReassertOverlayZOrder(g_overlays); // taskbar first, overlay above
+                }
             }
             return 0;
         }
@@ -309,9 +372,17 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
 
     case WM_ZORDER_RECHECK:
         // Another window changed z-order (e.g. WeChat went topmost).
-        // Re-assert our overlays above it, then push taskbar back on top.
+        // Same split logic as TIMER_ZORDER: menu visible → overlay only,
+        // no menu → full re-assertion including taskbar.
         if (g_watermarkVisible) {
-            ReassertOverlayZOrder(g_overlays);
+            if (IsAnyMenuVisible()) {
+                for (auto& ow : g_overlays)
+                    if (ow.hwnd && IsWindow(ow.hwnd) && IsWindowVisible(ow.hwnd))
+                        SetWindowPos(ow.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            } else {
+                ReassertOverlayZOrder(g_overlays);
+            }
         }
         return 0;
 
