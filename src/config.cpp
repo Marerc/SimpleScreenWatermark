@@ -84,6 +84,9 @@ void ParseHotkeyString(const std::wstring& str, UINT& modifiers, UINT& vk) {
             modifiers |= MOD_WIN;
         } else if (upper.size() == 1 && upper[0] >= L'A' && upper[0] <= L'Z') {
             vk = upper[0];
+        } else if (upper.size() == 1 && upper[0] >= L'0' && upper[0] <= L'9') {
+            // Support数字键0-9
+            vk = upper[0];
         } else if (upper.size() >= 2 && upper[0] == L'F') {
             int fnum = _wtoi(upper.c_str() + 1);
             if (fnum >= 1 && fnum <= 24) {
@@ -138,7 +141,10 @@ void WriteDefaultConfig(const std::wstring& path) {
         L"NIC=auto\r\n"
         L"\r\n"
         L"[Hotkey]\r\n"
-        L"Hotkey=Ctrl+W\r\n";
+        L"Hotkey=Ctrl+W\r\n"
+        L"TempHideHotkey=Ctrl+Shift+W\r\n"
+        L"TempHideDuration=5\r\n"
+        L"ScreenshotHotkey=Win+Shift+S\r\n";
 
     HANDLE hFile = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -189,6 +195,16 @@ void LoadConfig(Config& cfg) {
     std::wstring hotkeyStr = ReadIniString(L"Hotkey", L"Hotkey", L"Ctrl+W", p);
     ParseHotkeyString(hotkeyStr, cfg.hotkeyModifiers, cfg.hotkeyVk);
 
+    // Temporary hide hotkey
+    std::wstring tempHideStr = ReadIniString(L"Hotkey", L"TempHideHotkey", L"Ctrl+Shift+W", p);
+    ParseHotkeyString(tempHideStr, cfg.tempHideModifiers, cfg.tempHideVk);
+
+    cfg.tempHideDuration = ReadIniInt(L"Hotkey", L"TempHideDuration", 5, p);
+
+    // Screenshot hotkey (simulated after temporary hide)
+    std::wstring screenshotStr = ReadIniString(L"Hotkey", L"ScreenshotHotkey", L"Win+Shift+S", p);
+    ParseHotkeyString(screenshotStr, cfg.screenshotModifiers, cfg.screenshotVk);
+
     // Clamp values
     if (cfg.opacity < 0) cfg.opacity = 0;
     if (cfg.opacity > 255) cfg.opacity = 255;
@@ -199,6 +215,8 @@ void LoadConfig(Config& cfg) {
     if (cfg.randomRefreshRange < 0) cfg.randomRefreshRange = 0;
     if (cfg.randomOffsetX < 0) cfg.randomOffsetX = 0;
     if (cfg.randomOffsetY < 0) cfg.randomOffsetY = 0;
+    if (cfg.tempHideDuration < 1) cfg.tempHideDuration = 1;
+    if (cfg.tempHideDuration > 300) cfg.tempHideDuration = 300;
 }
 
 // File watcher thread

@@ -30,6 +30,15 @@ struct Config {
     // [Hotkey]
     UINT hotkeyModifiers = MOD_CONTROL;
     UINT hotkeyVk        = 'W';
+
+    // [Hotkey] Temporary hide
+    UINT tempHideModifiers = MOD_CONTROL | MOD_SHIFT;
+    UINT tempHideVk        = 'W';
+    int  tempHideDuration  = 5;  // seconds, auto-restore after this duration
+
+    // [Hotkey] Screenshot (simulated after temporary hide)
+    UINT screenshotModifiers = MOD_WIN | MOD_SHIFT;
+    UINT screenshotVk        = 'S';
 };
 
 // Get config file path (%APPDATA%\SimpleScreenMark\config.ini)
