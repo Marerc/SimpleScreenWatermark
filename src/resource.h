@@ -23,3 +23,4 @@
 #define TIMER_ZORDER            3   // periodic z-order re-assertion (independent of content refresh)
 #define TIMER_TEMP_HIDE         4   // auto-restore watermark after temporary hide
 #define TIMER_SIMULATE_SCREENSHOT 5 // delayed screenshot hotkey simulation
+#define TIMER_DISPLAY_CHANGE      6 // debounce overlay recreation after display changes

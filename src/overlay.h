@@ -7,7 +7,8 @@ struct Config;
 
 struct OverlayWindow {
     HWND hwnd = nullptr;
-    RECT workArea = {};
+    RECT windowArea = {};
+    RECT monitorArea = {};
 };
 
 // Create overlay windows for all monitors
@@ -33,3 +34,7 @@ void RegisterOverlayClass(HINSTANCE hInstance);
 // Re-assert overlay windows as topmost, then push taskbar back above them.
 // Call this whenever another window steals the top z-order position.
 void ReassertOverlayZOrder(std::vector<OverlayWindow>& overlays);
+
+// Return true when the live overlay windows exactly cover the current monitor
+// topology. Used as a fallback when display notifications are missed by RDP.
+bool OverlaysMatchCurrentMonitors(const std::vector<OverlayWindow>& overlays);

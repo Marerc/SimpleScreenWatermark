@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <wtsapi32.h>
 #include <shellapi.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -33,6 +34,7 @@ static std::vector<OverlayWindow> g_overlays;
 
 // WinEvent hook — detects other windows going topmost so we can re-assert ours
 static HWINEVENTHOOK g_zorderHook = nullptr;
+static bool g_sessionNotificationRegistered = false;
 
 // Shared RNG — mt19937 supports full int range unlike rand() (RAND_MAX=32767)
 static std::mt19937 g_rng{std::random_device{}()};
@@ -49,6 +51,7 @@ static void TryRegisterHotkey();
 static void InstallZOrderHook();
 static void RemoveZOrderHook();
 static void SimulateHotkey(UINT modifiers, UINT vk);
+static void ScheduleOverlayRecreation(HWND hwnd, UINT delayMs = 300);
 
 // Convert modifiers+vk to human-readable string, e.g. "Ctrl+W"
 static std::wstring HotkeyToString(UINT modifiers, UINT vk) {
@@ -291,6 +294,11 @@ static void RecreateOverlays() {
     }
 }
 
+static void ScheduleOverlayRecreation(HWND hwnd, UINT delayMs) {
+    KillTimer(hwnd, TIMER_DISPLAY_CHANGE);
+    SetTimer(hwnd, TIMER_DISPLAY_CHANGE, delayMs, nullptr);
+}
+
 static void ToggleWatermark() {
     if (g_tempHideActive) {
         KillTimer(g_hwndMain, TIMER_TEMP_HIDE);
@@ -433,6 +441,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
             return 0;
         }
         if (wParam == TIMER_ZORDER) {
+            if (!OverlaysMatchCurrentMonitors(g_overlays)) {
+                // Geometry is the final authority. This catches RDP dynamic
+                // resolution changes even if a display notification was missed.
+                ScheduleOverlayRecreation(hwnd);
+            }
             if (g_watermarkVisible) {
                 if (IsAnyMenuVisible()) {
                     for (auto& ow : g_overlays)
@@ -462,6 +475,13 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
             SimulateHotkey(g_config.screenshotModifiers, g_config.screenshotVk);
             return 0;
         }
+        if (wParam == TIMER_DISPLAY_CHANGE) {
+            // RDP reconnects can post a burst of display changes while Explorer
+            // is still rebuilding monitor/work-area and taskbar state.
+            KillTimer(hwnd, TIMER_DISPLAY_CHANGE);
+            RecreateOverlays();
+            return 0;
+        }
         break;
 
     case WM_CONFIG_CHANGED:
@@ -482,7 +502,25 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
         return 0;
 
     case WM_DISPLAYCHANGE:
-        RecreateOverlays();
+        // Coalesce a display-change burst and wait briefly for the shell's
+        // monitor topology/taskbar windows to settle before querying geometry.
+        ScheduleOverlayRecreation(hwnd);
+        return 0;
+
+    case WM_DPICHANGED:
+        ScheduleOverlayRecreation(hwnd);
+        return 0;
+
+    case WM_WTSSESSION_CHANGE:
+        switch (wParam) {
+        case WTS_CONSOLE_CONNECT:
+        case WTS_REMOTE_CONNECT:
+        case WTS_SESSION_UNLOCK:
+            // Session notifications can precede the final remote resolution;
+            // the geometry fallback will catch any later adjustment.
+            ScheduleOverlayRecreation(hwnd, 1000);
+            break;
+        }
         return 0;
 
     case WM_DESTROY:
@@ -496,6 +534,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
         KillTimer(hwnd, TIMER_HOTKEY_NOTIFY);
         KillTimer(hwnd, TIMER_TEMP_HIDE);
         KillTimer(hwnd, TIMER_SIMULATE_SCREENSHOT);
+        KillTimer(hwnd, TIMER_DISPLAY_CHANGE);
+        if (g_sessionNotificationRegistered) {
+            WTSUnRegisterSessionNotification(hwnd);
+            g_sessionNotificationRegistered = false;
+        }
         PostQuitMessage(0);
         return 0;
     }
@@ -529,9 +572,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     RegisterOverlayClass(hInstance);
 
-    g_hwndMain = CreateWindowExW(0, L"SimpleScreenMarkMain", L"",
-                                  0, 0, 0, 0, 0,
-                                  HWND_MESSAGE, nullptr, hInstance, nullptr);
+    // This must be a real top-level window, not HWND_MESSAGE. Message-only
+    // windows do not receive broadcast messages such as WM_DISPLAYCHANGE.
+    // Keeping it hidden and WS_EX_TOOLWINDOW avoids any taskbar/Alt+Tab entry.
+    g_hwndMain = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"SimpleScreenMarkMain", L"", WS_POPUP,
+        0, 0, 0, 0, nullptr, nullptr, hInstance, nullptr);
     if (!g_hwndMain) {
         Gdiplus::GdiplusShutdown(g_gdiplusToken);
         WSACleanup();
@@ -540,6 +587,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     }
 
     CreateTrayIcon(g_hwndMain, hInstance);
+
+    g_sessionNotificationRegistered =
+        WTSRegisterSessionNotification(
+            g_hwndMain, NOTIFY_FOR_THIS_SESSION) != FALSE;
 
     TryRegisterHotkey();
 

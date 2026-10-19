@@ -38,6 +38,7 @@ target_link_libraries(SimpleScreenMark PRIVATE
     gdi32
     advapi32
     ole32
+    wtsapi32
 )
 
 # Disable auto-generated manifest — we embed our own in app.rc
